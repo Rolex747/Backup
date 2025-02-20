@@ -72,10 +72,13 @@ serve(async (req) => {
 async function obtenerAccesosDirectos(folderId: string, token: string): Promise<{ nombre: string; targetId: string }[]> {
   console.log(`📡 Buscando accesos directos en la carpeta ${folderId}...`);
 
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.shortcut'&fields=files(id,name,shortcutDetails)`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+mimeType='application/vnd.google-apps.shortcut'&fields=files(id,name,shortcutDetails)`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
 
   const data = await response.json();
   if (!data.files || data.files.length === 0) return [];
@@ -92,10 +95,13 @@ async function obtenerAccesosDirectos(folderId: string, token: string): Promise<
 async function obtenerArchivosEnCarpeta(folderId: string, token: string): Promise<any[]> {
   console.log(`📡 Buscando archivos en la carpeta ${folderId}...`);
 
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType)`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType)`,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
 
   const data = await response.json();
   return data.files || [];
@@ -124,28 +130,28 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     const data = `${encodedHeader}.${encodedPayload}`;
 
     console.log("🔏 Procesando la clave privada...");
-    
+
     // 📌 Limpiar la clave privada correctamente
     const pemKey = credentials.private_key.replace(/\\n/g, "\n").trim();
-    
+
     console.log("🔑 Primera línea de private_key (limpia):", pemKey.split("\n")[0]);
 
     // 📌 Convertir clave privada a formato binario
-    let keyBuffer;
-    try {
-      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
-    } catch (error) {
-      console.error("❌ Error al decodificar la clave privada:", error);
-      throw new Error("Formato incorrecto de private_key. Asegúrate de que está en formato válido.");
-    }
+    const keyBuffer = new TextEncoder().encode(pemKey);
 
-    let cryptoKey = await crypto.subtle.importKey(
-      "pkcs8",
-      keyBuffer.buffer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
+    let cryptoKey;
+    try {
+      cryptoKey = await crypto.subtle.importKey(
+        "pkcs8",
+        keyBuffer.buffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+    } catch (importError) {
+      console.error("❌ Error importando clave privada:", importError);
+      throw new Error("No se pudo importar la clave privada. Verifica el formato.");
+    }
 
     console.log("✅ Clave privada importada correctamente.");
 
