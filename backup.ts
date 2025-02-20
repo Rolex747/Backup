@@ -145,40 +145,60 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
 // 📌 Función para obtener archivos de Google Sheets, incluyendo shortcuts
 async function listarHojasDeCalculo(folderId: string, token: string) {
+  console.log(`📂 Buscando archivos en la carpeta ${folderId}...`);
+
   const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
-  const data = await response.json();
 
+  if (!response.ok) {
+    console.error(`❌ Error al obtener archivos de la carpeta:`, await response.text());
+    throw new Error("No se pudo obtener la lista de archivos de Google Drive.");
+  }
+
+  const data = await response.json();
   let archivos = data.files || [];
 
-  // 📌 Identificar shortcuts y obtener sus archivos de destino
+  // 📌 Identificar y resolver shortcuts
   for (const file of archivos) {
     if (file.mimeType === "application/vnd.google-apps.shortcut" && file.shortcutDetails?.targetId) {
-      console.log(`🔗 Detectado shortcut: ${file.name} -> ${file.shortcutDetails.targetId}`);
-
-      // 📌 Obtener información del archivo de destino
       const targetId = file.shortcutDetails.targetId;
-      const targetUrl = `https://www.googleapis.com/drive/v3/files/${targetId}?fields=id,name,mimeType`;
-      const targetResponse = await fetch(targetUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      });
+      console.log(`🔗 Detectado shortcut: ${file.name} -> ${targetId}`);
 
-      if (targetResponse.ok) {
-        const targetFile = await targetResponse.json();
-        console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetFile.name}`);
+      try {
+        const targetUrl = `https://www.googleapis.com/drive/v3/files/${targetId}?fields=id,name,mimeType,parents`;
+        const targetResponse = await fetch(targetUrl, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        });
+
+        const targetData = await targetResponse.json();
+
+        if (!targetResponse.ok) {
+          console.warn(`⚠️ No se pudo acceder al archivo destino del shortcut ${file.name}. Respuesta:`, targetData);
+          continue;
+        }
+
+        console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetData.name}`);
+
+        // 📌 Verificar si el archivo destino está dentro de otra carpeta (unidad compartida)
+        if (!targetData.parents || targetData.parents.length === 0) {
+          console.warn(`⚠️ El archivo ${targetData.name} no tiene carpeta padre asignada, puede estar en una unidad compartida.`);
+        }
 
         // 📌 Agregar el archivo real a la lista
-        archivos.push(targetFile);
-      } else {
-        console.warn(`⚠️ No se pudo acceder al archivo destino del shortcut ${file.name}`);
+        archivos.push(targetData);
+      } catch (error) {
+        console.error(`❌ Error al procesar el shortcut ${file.name}:`, error);
       }
     }
   }
 
   // 📌 Filtrar solo los Google Sheets
-  return archivos.filter((file: any) => file.mimeType === "application/vnd.google-apps.spreadsheet");
+  const hojas = archivos.filter((file: any) => file.mimeType === "application/vnd.google-apps.spreadsheet");
+
+  console.log(`📄 Total de hojas de cálculo detectadas (incluyendo shortcuts): ${hojas.length}`);
+  return hojas;
 }
 
 // 📌 Función para convertir Google Sheet a XLSX
