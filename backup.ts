@@ -19,7 +19,7 @@ serve(async (req) => {
       console.log("🔑 Token OAuth generado correctamente.");
 
       // 📌 ID de la carpeta de Google Drive a respaldar (modificar según sea necesario)
-      const folderId = "TU_FOLDER_ID_AQUI";
+      const folderId = "1LT7ddkv2GomrY7JfymBwK6YZJXtlKufz";
 
       // 📌 Realizar el backup
       await realizarBackup(folderId, token);
