@@ -66,20 +66,23 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
     const jwtUnsigned = `${encodeBase64(header)}.${encodeBase64(payload)}`;
 
-    // 📌 Corregir la conversión de la clave privada
+    console.log("📝 JWT sin firmar:", jwtUnsigned);
+
+    // 📌 Procesar la clave privada correctamente
     console.log("🔏 Procesando la clave privada...");
     const pemKey = credentials.private_key
-      .replace(/\\n/g, "\n") 
+      .replace(/\\n/g, "\n")
       .replace("-----BEGIN PRIVATE KEY-----\n", "")
       .replace("\n-----END PRIVATE KEY-----", "")
       .replace(/\n/g, "");
 
     console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
 
-    // 📌 Convertir clave privada de Base64 a binario
+    // 📌 Convertir clave privada a binario
     let keyBuffer;
     try {
       keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+      console.log("🔓 Clave privada decodificada correctamente.");
     } catch (error) {
       console.error("❌ Error al decodificar la clave privada:", error);
       throw new Error("No se pudo decodificar la clave privada correctamente.");
@@ -94,17 +97,17 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
         false,
         ["sign"]
       );
+      console.log("✅ Clave privada importada correctamente.");
     } catch (importError) {
       console.error("❌ Error importando clave privada:", importError);
       throw new Error("No se pudo importar la clave privada. Verifica el formato.");
     }
 
-    console.log("✅ Clave privada importada correctamente.");
-
     // 📌 Firmar el JWT con la clave privada
     let signature;
     try {
       signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(jwtUnsigned));
+      console.log("✅ JWT firmado correctamente.");
     } catch (signError) {
       console.error("❌ Error al firmar el JWT:", signError);
       throw new Error("No se pudo firmar el JWT.");
@@ -112,6 +115,8 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
     const jwt = `${jwtUnsigned}.${encodedSignature}`;
+
+    console.log("🔑 JWT completo:", jwt);
 
     // 📌 Obtener el Token de Acceso desde Google OAuth
     console.log("📡 Enviando solicitud a Google OAuth...");
@@ -125,8 +130,6 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     });
 
     const result = await response.json();
-
-    // 🔍 Nuevo Log para Depuración
     console.log("🔍 Respuesta completa de Google OAuth:", result);
 
     if (!result.access_token) {
@@ -140,7 +143,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función para listar solo archivos Google Sheets en una carpeta
+// 📌 Función para obtener archivos de Google Sheets
 async function listarHojasDeCalculo(folderId: string, token: string) {
   const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
   const response = await fetch(url, {
