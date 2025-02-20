@@ -43,39 +43,6 @@ serve(async (req) => {
   return new Response("⛔ Método no permitido", { status: 405 });
 });
 
-// 📌 Función para obtener archivos de Google Sheets (ahora sigue accesos directos)
-async function listarHojasDeCalculo(folderId: string, token: string): Promise<any[]> {
-  console.log(`📂 Buscando archivos en la carpeta: ${folderId}`);
-
-  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-  });
-
-  const data = await response.json();
-  if (!data.files) {
-    throw new Error("❌ No se encontraron archivos en la carpeta.");
-  }
-
-  const archivos: any[] = [];
-  
-  for (const file of data.files) {
-    if (file.mimeType === "application/vnd.google-apps.spreadsheet") {
-      archivos.push(file);
-    } else if (file.mimeType === "application/vnd.google-apps.shortcut") {
-      console.log(`🔗 Encontrado acceso directo: ${file.name}`);
-
-      if (file.shortcutDetails && file.shortcutDetails.targetId) {
-        console.log(`➡️ Siguiendo acceso directo a: ${file.shortcutDetails.targetId}`);
-        const archivosShortcut = await listarHojasDeCalculo(file.shortcutDetails.targetId, token);
-        archivos.push(...archivosShortcut);
-      }
-    }
-  }
-
-  return archivos;
-}
-
 // 📌 Función para obtener el token OAuth
 async function obtenerTokenOAuth(credentials: any): Promise<string> {
   try {
@@ -103,23 +70,55 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     // 📌 Procesar la clave privada correctamente
     console.log("🔏 Procesando la clave privada...");
-    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
+    const pemKey = credentials.private_key
+      .replace(/\\n/g, "\n")
+      .replace("-----BEGIN PRIVATE KEY-----\n", "")
+      .replace("\n-----END PRIVATE KEY-----", "")
+      .replace(/\n/g, "");
 
     console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
 
+    // 📌 Convertir clave privada a binario
+    let keyBuffer;
+    try {
+      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+      console.log("🔓 Clave privada decodificada correctamente.");
+    } catch (error) {
+      console.error("❌ Error al decodificar la clave privada:", error);
+      throw new Error("No se pudo decodificar la clave privada correctamente.");
+    }
+
+    let cryptoKey;
+    try {
+      cryptoKey = await crypto.subtle.importKey(
+        "pkcs8",
+        keyBuffer.buffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      console.log("✅ Clave privada importada correctamente.");
+    } catch (importError) {
+      console.error("❌ Error importando clave privada:", importError);
+      throw new Error("No se pudo importar la clave privada. Verifica el formato.");
+    }
+
     // 📌 Firmar el JWT con la clave privada
-    const cryptoKey = await crypto.subtle.importKey(
-      "pkcs8",
-      Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0)).buffer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
+    let signature;
+    try {
+      signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(jwtUnsigned));
+      console.log("✅ JWT firmado correctamente.");
+    } catch (signError) {
+      console.error("❌ Error al firmar el JWT:", signError);
+      throw new Error("No se pudo firmar el JWT.");
+    }
 
-    console.log("✅ Clave privada importada correctamente.");
-    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(jwtUnsigned));
-    const jwt = `${jwtUnsigned}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+    const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
+    const jwt = `${jwtUnsigned}.${encodedSignature}`;
 
+    console.log("🔑 JWT completo:", jwt);
+
+    // 📌 Obtener el Token de Acceso desde Google OAuth
     console.log("📡 Enviando solicitud a Google OAuth...");
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -134,7 +133,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     console.log("🔍 Respuesta completa de Google OAuth:", result);
 
     if (!result.access_token) {
-      throw new Error("❌ No se pudo obtener el token OAuth.");
+      throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
     }
 
     return result.access_token;
@@ -144,18 +143,14 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función principal de backup
-async function realizarBackup(folderId: string, token: string) {
-  console.log("📂 Buscando Google Sheets...");
-  const hojas = await listarHojasDeCalculo(folderId, token);
-
-  console.log(`📄 Total de hojas a respaldar: ${hojas.length}`);
-  for (const hoja of hojas) {
-    const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, token);
-    await subirArchivoAGCS(`${hoja.name}.xlsx`, xlsxData, token);
-  }
-
-  console.log("✅ Backup completado.");
+// 📌 Función para obtener archivos de Google Sheets
+async function listarHojasDeCalculo(folderId: string, token: string) {
+  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  });
+  const data = await response.json();
+  return data.files.filter((file: any) => file.mimeType === "application/vnd.google-apps.spreadsheet");
 }
 
 // 📌 Función para convertir Google Sheet a XLSX
@@ -184,4 +179,18 @@ async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: s
 
   if (!response.ok) throw new Error(`❌ Error al subir ${fileName} a GCS.`);
   console.log(`☁️ Archivo subido: ${fileName}`);
+}
+
+// 📌 Función principal de backup
+async function realizarBackup(folderId: string, token: string) {
+  console.log("📂 Buscando Google Sheets...");
+  const hojas = await listarHojasDeCalculo(folderId, token);
+
+  console.log(`📄 Total de hojas a respaldar: ${hojas.length}`);
+  for (const hoja of hojas) {
+    const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, token);
+    await subirArchivoAGCS(`${hoja.name}.xlsx`, xlsxData, token);
+  }
+
+  console.log("✅ Backup completado.");
 }
