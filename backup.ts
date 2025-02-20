@@ -220,10 +220,18 @@ async function convertirGoogleSheetAXLSX(fileId: string, token: string): Promise
   return new Uint8Array(await response.arrayBuffer());
 }
 
-// 📌 Función para subir archivos a Google Cloud Storage
+// 📌 Función para subir archivos a Google Cloud Storage en una carpeta con fecha
 async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: string) {
+  // 📌 Obtener la fecha actual en formato YYYY-MM-DD
+  const fecha = new Date().toISOString().split("T")[0]; // Ejemplo: "2025-02-20"
+
+  // 📌 Crear la ruta dentro del bucket
+  const folderPath = `backups/${fecha}/${fileName}`; // Ejemplo: backups/2025-02-20/nombre.xlsx
+
+  console.log(`☁️ Subiendo archivo a GCS: ${folderPath}`);
+
   const bucketName = "cloud-ai-platform-f42b7b51-2a5b-4719-af77-65cf76b7dd86";
-  const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
+  const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${folderPath}`;
 
   const response = await fetch(uploadUrl, {
     method: "POST",
@@ -234,8 +242,12 @@ async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: s
     body: fileData,
   });
 
-  if (!response.ok) throw new Error(`❌ Error al subir ${fileName} a GCS.`);
-  console.log(`☁️ Archivo subido: ${fileName}`);
+  if (!response.ok) {
+    console.error(`❌ Error al subir ${fileName} a GCS.`, await response.text());
+    throw new Error(`No se pudo subir ${fileName} a GCS.`);
+  }
+
+  console.log(`✅ Archivo subido correctamente: ${folderPath}`);
 }
 
 // 📌 Función principal de backup
