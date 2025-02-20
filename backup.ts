@@ -103,7 +103,13 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     });
 
     const result = await response.json();
-    if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
+
+    // 🔍 Nuevo Log para Depuración
+    console.log("🔍 Respuesta de Google OAuth:", result);
+
+    if (!result.access_token) {
+      throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
+    }
 
     return result.access_token;
   } catch (error) {
