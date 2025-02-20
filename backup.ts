@@ -143,7 +143,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función para obtener archivos de Google Sheets, incluyendo shortcuts
+// 📌 Función para obtener archivos de Google Sheets, incluyendo shortcuts a carpetas
 async function listarHojasDeCalculo(folderId: string, token: string) {
   console.log(`📂 Buscando archivos en la carpeta ${folderId}...`);
 
@@ -157,17 +157,17 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
     throw new Error("No se pudo obtener la lista de archivos de Google Drive.");
   }
 
-  const data = await response.json();
-  let archivos = data.files || [];
+  let archivos = (await response.json()).files || [];
 
-  // 📌 Identificar y resolver shortcuts
+  // 📌 Procesar shortcuts
   for (const file of archivos) {
     if (file.mimeType === "application/vnd.google-apps.shortcut" && file.shortcutDetails?.targetId) {
       const targetId = file.shortcutDetails.targetId;
       console.log(`🔗 Detectado shortcut: ${file.name} -> ${targetId}`);
 
       try {
-        const targetUrl = `https://www.googleapis.com/drive/v3/files/${targetId}?fields=id,name,mimeType,parents`;
+        // 📌 Obtener información del destino del shortcut
+        const targetUrl = `https://www.googleapis.com/drive/v3/files/${targetId}?fields=id,name,mimeType`;
         const targetResponse = await fetch(targetUrl, {
           headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
         });
@@ -179,15 +179,15 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
           continue;
         }
 
-        console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetData.name}`);
+        console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetData.name} (${targetData.mimeType})`);
 
-        // 📌 Verificar si el archivo destino está dentro de otra carpeta (unidad compartida)
-        if (!targetData.parents || targetData.parents.length === 0) {
-          console.warn(`⚠️ El archivo ${targetData.name} no tiene carpeta padre asignada, puede estar en una unidad compartida.`);
+        if (targetData.mimeType === "application/vnd.google-apps.folder") {
+          console.log(`📂 Shortcut apunta a una carpeta, listando su contenido...`);
+          const archivosEnCarpeta = await listarHojasDeCalculo(targetId, token);
+          archivos = archivos.concat(archivosEnCarpeta);
+        } else {
+          archivos.push(targetData);
         }
-
-        // 📌 Agregar el archivo real a la lista
-        archivos.push(targetData);
       } catch (error) {
         console.error(`❌ Error al procesar el shortcut ${file.name}:`, error);
       }
