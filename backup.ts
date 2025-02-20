@@ -42,47 +42,74 @@ serve(async (req) => {
 
 // 📌 Función para obtener el token OAuth
 async function obtenerTokenOAuth(credentials: any): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "RS256", typ: "JWT" };
-  const payload = {
-    iss: credentials.client_email,
-    scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/devstorage.full_control",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-  };
+  try {
+    console.log("🛠️ Generando JWT...");
 
-  // 📌 Firmar el JWT
-  const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
-  const jwt = `${encodeBase64(header)}.${encodeBase64(payload)}`;
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    await crypto.subtle.importKey(
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+    };
+
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: credentials.client_email,
+      scope: "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/devstorage.full_control",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    };
+
+    // 📌 Firmar el JWT correctamente
+    const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
+    const jwtUnsigned = `${encodeBase64(header)}.${encodeBase64(payload)}`;
+
+    // 📌 Corregir la conversión de la clave privada
+    console.log("🔏 Procesando la clave privada...");
+    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
+
+    const cryptoKey = await crypto.subtle.importKey(
       "pkcs8",
-      Uint8Array.from(atob(credentials.private_key.replace(/\\n/g, "\n")), (c) => c.charCodeAt(0)).buffer,
+      Uint8Array.from(pemKey.split("").map((c) => c.charCodeAt(0))).buffer,
       { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
       false,
       ["sign"]
-    ),
-    new TextEncoder().encode(jwt)
-  );
-  
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${jwt}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`,
-    }),
-  });
+    );
 
-  const result = await tokenResponse.json();
-  if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
+    console.log("✅ Clave privada importada correctamente.");
 
-  return result.access_token;
+    // 📌 Firmar el JWT con la clave privada
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      cryptoKey,
+      new TextEncoder().encode(jwtUnsigned)
+    );
+
+    const jwt = `${jwtUnsigned}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+
+    // 📌 Obtener el Token de Acceso desde Google OAuth
+    console.log("📡 Enviando solicitud a Google OAuth...");
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt,
+      }),
+    });
+
+    const result = await response.json();
+    if (!result.access_token) {
+      throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
+    }
+
+    return result.access_token;
+  } catch (error) {
+    console.error("❌ Error al generar token OAuth:", error);
+    throw new Error("No se pudo generar el token OAuth.");
+  }
 }
 
-// 📌 Función para listar solo archivos Google Sheets en una carpeta
+// 📌 Función para obtener archivos de Google Sheets en una carpeta
 async function listarHojasDeCalculo(folderId: string, token: string) {
   const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
   const response = await fetch(url, {
@@ -105,12 +132,12 @@ async function obtenerHojasDesdeCarpeta(folderId: string, token: string) {
 }
 
 // 📌 Función para convertir Google Sheet a XLSX
-async function convertirGoogleSheetAXLSX(fileId: string, fileName: string, token: string): Promise<Uint8Array> {
+async function convertirGoogleSheetAXLSX(fileId: string, token: string): Promise<Uint8Array> {
   const url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!response.ok) throw new Error(`❌ Error al convertir ${fileName} a XLSX.`);
+  if (!response.ok) throw new Error(`❌ Error al convertir a XLSX.`);
   return new Uint8Array(await response.arrayBuffer());
 }
 
@@ -118,7 +145,7 @@ async function convertirGoogleSheetAXLSX(fileId: string, fileName: string, token
 async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: string) {
   const bucketName = "TU_BUCKET_NAME";
   const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
-  
+
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: {
@@ -139,7 +166,7 @@ async function realizarBackup(folderId: string, token: string) {
 
   console.log(`📄 Total de hojas a respaldar: ${hojas.length}`);
   for (const hoja of hojas) {
-    const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, hoja.name, token);
+    const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, token);
     await subirArchivoAGCS(`${hoja.name}.xlsx`, xlsxData, token);
   }
 
