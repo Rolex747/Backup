@@ -18,13 +18,22 @@ serve(async (req) => {
 
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
-
       console.log("🔑 Token OAuth generado correctamente:", token);
 
-      return new Response("✅ Backup iniciado en Deno Deploy", { status: 200 });
+      // 📌 Listar archivos en el bucket
+      const bucketName = "backups-drive-feasy";
+      const archivos = await listarArchivosEnBucket(bucketName, token);
+
+      if (!archivos || archivos.error) {
+        throw new Error(`❌ Error accediendo al bucket: ${JSON.stringify(archivos)}`);
+      }
+
+      console.log("📂 Archivos en el bucket:", JSON.stringify(archivos));
+
+      return new Response(JSON.stringify({ message: "✅ Backup completado en Deno Deploy", files: archivos }), { status: 200 });
     } catch (error) {
       console.error("❌ Error en el backup:", error);
-      return new Response(`❌ Error: ${error.message}`, { status: 500 });
+      return new Response(JSON.stringify({ error: error.message || "Error desconocido" }), { status: 500 });
     }
   }
 
@@ -85,4 +94,16 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
 
   return result.access_token;
+}
+
+// 📌 Función para listar archivos en un bucket de Google Cloud Storage
+async function listarArchivosEnBucket(bucketName: string, token: string) {
+  const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${bucketName}/o`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  return await response.json();
 }
