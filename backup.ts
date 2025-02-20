@@ -143,7 +143,7 @@ async function convertirGoogleSheetAXLSX(fileId: string, token: string): Promise
 
 // 📌 Función para subir archivos a Google Cloud Storage
 async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: string) {
-  const bucketName = "TU_BUCKET_NAME";
+  const bucketName = "cloud-ai-platform-f42b7b51-2a5b-4719-af77-65cf76b7dd86"; // ⬅️ Aquí está tu bucket
   const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
 
   const response = await fetch(uploadUrl, {
