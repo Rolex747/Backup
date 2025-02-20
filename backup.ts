@@ -25,15 +25,22 @@ serve(async (req) => {
       const archivos = await listarArchivosEnBucket(bucketName, token);
 
       if (!archivos || archivos.error) {
-        throw new Error(`❌ Error accediendo al bucket: ${JSON.stringify(archivos)}`);
+        console.error("❌ Error al acceder al bucket:", archivos);
+        throw new Error(`Error en acceso al bucket: ${JSON.stringify(archivos)}`);
       }
 
       console.log("📂 Archivos en el bucket:", JSON.stringify(archivos));
 
-      return new Response(JSON.stringify({ message: "✅ Backup completado en Deno Deploy", files: archivos }), { status: 200 });
+      return new Response(
+        JSON.stringify({ message: "✅ Backup completado en Deno Deploy", files: archivos }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
     } catch (error) {
       console.error("❌ Error en el backup:", error);
-      return new Response(JSON.stringify({ error: error.message || "Error desconocido" }), { status: 500 });
+      return new Response(
+        JSON.stringify({ error: error instanceof Error ? error.message : "Error desconocido" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
     }
   }
 
@@ -42,68 +49,84 @@ serve(async (req) => {
 
 // 📌 Función para generar el token OAuth con la cuenta de servicio
 async function obtenerTokenOAuth(credentials: any): Promise<string> {
-  const header = {
-    alg: "RS256",
-    typ: "JWT",
-  };
+  try {
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+    };
 
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: credentials.client_email,
-    scope: "https://www.googleapis.com/auth/devstorage.full_control",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-  };
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: credentials.client_email,
+      scope: "https://www.googleapis.com/auth/devstorage.full_control",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    };
 
-  // 📌 Convertir a Base64
-  const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
-  const encodedHeader = encodeBase64(header);
-  const encodedPayload = encodeBase64(payload);
+    // 📌 Convertir a Base64
+    const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
+    const encodedHeader = encodeBase64(header);
+    const encodedPayload = encodeBase64(payload);
 
-  const data = `${encodedHeader}.${encodedPayload}`;
-  
-  // 📌 Firmar el token con la clave privada
-  const encoder = new TextEncoder();
-  const keyBuffer = encoder.encode(credentials.private_key.replace(/\\n/g, "\n"));
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    "pkcs8",
-    keyBuffer,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
+    const data = `${encodedHeader}.${encodedPayload}`;
 
-  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(data));
-  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
+    // 📌 Firmar el token con la clave privada
+    const encoder = new TextEncoder();
+    const keyBuffer = encoder.encode(credentials.private_key.replace(/\\n/g, "\n"));
 
-  const jwt = `${data}.${encodedSignature}`;
+    const cryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      keyBuffer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
 
-  // 📌 Obtener el Token de Acceso desde Google OAuth
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: jwt,
-    }),
-  });
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(data));
+    const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
 
-  const result = await response.json();
-  if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
+    const jwt = `${data}.${encodedSignature}`;
 
-  return result.access_token;
+    // 📌 Obtener el Token de Acceso desde Google OAuth
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt,
+      }),
+    });
+
+    const result = await response.json();
+    if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
+
+    return result.access_token;
+  } catch (error) {
+    console.error("❌ Error al generar token OAuth:", error);
+    throw new Error("No se pudo generar el token OAuth.");
+  }
 }
 
 // 📌 Función para listar archivos en un bucket de Google Cloud Storage
 async function listarArchivosEnBucket(bucketName: string, token: string) {
-  const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${bucketName}/o`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  try {
+    const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${bucketName}/o`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-  return await response.json();
+    const result = await response.json();
+    if (result.error) {
+      console.error("❌ Error en respuesta del bucket:", result);
+      throw new Error(`Error en bucket: ${result.error.message}`);
+    }
+
+    return result;
+  } catch (error) {
+    console.error("❌ Error al listar archivos en el bucket:", error);
+    throw new Error("No se pudo acceder a los archivos del bucket.");
+  }
 }
