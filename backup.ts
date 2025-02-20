@@ -66,12 +66,26 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     // 📌 Procesar la clave privada
     console.log("🔏 Procesando la clave privada...");
-    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
-    console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
+    const pemKey = credentials.private_key
+      .replace(/\\n/g, "\n")
+      .replace("-----BEGIN PRIVATE KEY-----", "")
+      .replace("-----END PRIVATE KEY-----", "")
+      .trim();
+
+    console.log("🔑 Clave privada limpia (parcial):", pemKey.substring(0, 50) + "...");
+
+    // 📌 Convertir clave privada a binario
+    let keyBuffer;
+    try {
+      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+      console.log("🔓 Clave privada decodificada correctamente.");
+    } catch (error) {
+      console.error("❌ Error al decodificar la clave privada:", error);
+      throw new Error("No se pudo decodificar la clave privada correctamente.");
+    }
 
     let cryptoKey;
     try {
-      const keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
       cryptoKey = await crypto.subtle.importKey(
         "pkcs8",
         keyBuffer.buffer,
