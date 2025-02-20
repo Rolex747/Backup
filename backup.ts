@@ -19,6 +19,7 @@ serve(async (req) => {
       }
 
       console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
 
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
@@ -105,10 +106,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   try {
     console.log("🛠️ Generando JWT...");
 
-    const header = {
-      alg: "RS256",
-      typ: "JWT",
-    };
+    const header = { alg: "RS256", typ: "JWT" };
 
     const now = Math.floor(Date.now() / 1000);
     const payload = {
@@ -126,9 +124,20 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     const data = `${encodedHeader}.${encodedPayload}`;
 
     console.log("🔏 Procesando la clave privada...");
-    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
+    
+    // 📌 Limpiar la clave privada correctamente
+    const pemKey = credentials.private_key.replace(/\\n/g, "\n").trim();
+    
+    console.log("🔑 Primera línea de private_key (limpia):", pemKey.split("\n")[0]);
 
-    let keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+    // 📌 Convertir clave privada a formato binario
+    let keyBuffer;
+    try {
+      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+    } catch (error) {
+      console.error("❌ Error al decodificar la clave privada:", error);
+      throw new Error("Formato incorrecto de private_key. Asegúrate de que está en formato válido.");
+    }
 
     let cryptoKey = await crypto.subtle.importKey(
       "pkcs8",
