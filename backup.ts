@@ -15,9 +15,7 @@ serve(async (req) => {
       }
 
       console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
-
-      // 📌 Imprimir parte de la clave privada para revisar formato
-      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\\n")[0]); // Verificar el formato
 
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
@@ -66,10 +64,18 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     const data = `${encodedHeader}.${encodedPayload}`;
 
-    // 📌 Firmar el token con la clave privada
-    console.log("🔏 Firmando el JWT...");
-    const encoder = new TextEncoder();
-    const keyBuffer = encoder.encode(credentials.private_key.replace(/\\n/g, "\n"));
+    // 📌 Decodificar correctamente la clave privada
+    console.log("🔏 Procesando la clave privada...");
+    const pemKey = credentials.private_key
+      .replace(/\\n/g, "\n") // Convertir saltos de línea codificados
+      .replace("-----BEGIN PRIVATE KEY-----\n", "") // Eliminar encabezado
+      .replace("\n-----END PRIVATE KEY-----", "") // Eliminar pie de firma
+      .replace(/\n/g, ""); // Quitar saltos de línea internos
+
+    console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
+
+    // 📌 Convertir clave privada a formato binario
+    const keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0)).buffer;
 
     let cryptoKey;
     try {
@@ -89,7 +95,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     let signature;
     try {
-      signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(data));
+      signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(data));
     } catch (signError) {
       console.error("❌ Error al firmar el JWT:", signError);
       throw new Error("No se pudo firmar el JWT.");
