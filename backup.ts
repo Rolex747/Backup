@@ -100,52 +100,71 @@ async function obtenerArchivosEnCarpeta(folderId: string, token: string): Promis
   return data.files || [];
 }
 
-// 📌 Función para convertir y subir un archivo a Google Cloud Storage
-async function convertirYSubirArchivo(archivo: any, token: string): Promise<void> {
-  console.log(`📤 Iniciando backup de: ${archivo.name}...`);
-
-  // 📌 Descargar archivo
-  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${archivo.id}?alt=media`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    console.error(`❌ Error al descargar ${archivo.name}:`, await response.text());
-    return;
-  }
-
-  const fileData = await response.arrayBuffer();
-
-  // 📌 Subir a Google Cloud Storage
-  const storageResponse = await fetch(`https://storage.googleapis.com/upload/storage/v1/b/${BUCKET_NAME}/o?uploadType=media&name=${archivo.name}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/octet-stream",
-    },
-    body: fileData,
-  });
-
-  if (!storageResponse.ok) {
-    console.error(`❌ Error al subir ${archivo.name}:`, await storageResponse.text());
-  } else {
-    console.log(`✅ Archivo ${archivo.name} subido con éxito.`);
-  }
-}
-
-// 📌 Función para obtener el token OAuth con la cuenta de servicio (se mantiene igual)
+// 📌 Función para obtener el token OAuth con la cuenta de servicio
 async function obtenerTokenOAuth(credentials: any): Promise<string> {
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: "TOKEN_FIRMADO_AQUI", // Aquí va la lógica de firma JWT (mantenida de tu código)
-    }),
-  });
+  try {
+    console.log("🛠️ Generando JWT...");
 
-  const result = await response.json();
-  if (!result.access_token) throw new Error("❌ No se pudo obtener el token OAuth.");
-  return result.access_token;
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+    };
+
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: credentials.client_email,
+      scope: "https://www.googleapis.com/auth/devstorage.full_control",
+      aud: "https://oauth2.googleapis.com/token",
+      iat: now,
+      exp: now + 3600,
+    };
+
+    const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
+    const encodedHeader = encodeBase64(header);
+    const encodedPayload = encodeBase64(payload);
+
+    const data = `${encodedHeader}.${encodedPayload}`;
+
+    console.log("🔏 Procesando la clave privada...");
+    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
+
+    let keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+
+    let cryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      keyBuffer.buffer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    console.log("✅ Clave privada importada correctamente.");
+
+    let signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(data));
+
+    const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
+    const jwt = `${data}.${encodedSignature}`;
+
+    console.log("📡 Enviando solicitud a Google OAuth...");
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: jwt,
+      }),
+    });
+
+    const result = await response.json();
+    console.log("🔍 Respuesta OAuth:", result);
+
+    if (!result.access_token) {
+      throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
+    }
+
+    return result.access_token;
+  } catch (error) {
+    console.error("❌ Error al generar token OAuth:", error);
+    throw new Error("No se pudo generar el token OAuth.");
+  }
 }
