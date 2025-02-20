@@ -15,7 +15,7 @@ serve(async (req) => {
       }
 
       console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
-      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\\n")[0]); // Verificar el formato
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
 
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
@@ -74,14 +74,20 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
 
     console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
 
-    // 📌 Convertir clave privada a formato binario
-    const keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0)).buffer;
+    // 📌 Convertir clave privada de Base64 a binario
+    let keyBuffer;
+    try {
+      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+    } catch (error) {
+      console.error("❌ Error al decodificar la clave privada en Base64:", error);
+      throw new Error("No se pudo decodificar la clave privada correctamente.");
+    }
 
     let cryptoKey;
     try {
       cryptoKey = await crypto.subtle.importKey(
         "pkcs8",
-        keyBuffer,
+        keyBuffer.buffer,
         { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
         false,
         ["sign"]
