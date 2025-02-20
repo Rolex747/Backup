@@ -14,6 +14,9 @@ serve(async (req) => {
         throw new Error("❌ Credenciales de Google Cloud no encontradas.");
       }
 
+      console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
+
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
       console.log("🔑 Token OAuth generado correctamente.");
@@ -59,32 +62,56 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
       exp: now + 3600,
     };
 
-    // 📌 Firmar el JWT correctamente
+    // 📌 Convertir a Base64 correctamente
     const encodeBase64 = (obj: any) => btoa(JSON.stringify(obj));
     const jwtUnsigned = `${encodeBase64(header)}.${encodeBase64(payload)}`;
 
     // 📌 Corregir la conversión de la clave privada
     console.log("🔏 Procesando la clave privada...");
-    const pemKey = credentials.private_key.replace(/\\n/g, "\n");
+    const pemKey = credentials.private_key
+      .replace(/\\n/g, "\n") 
+      .replace("-----BEGIN PRIVATE KEY-----\n", "")
+      .replace("\n-----END PRIVATE KEY-----", "")
+      .replace(/\n/g, "");
 
-    const cryptoKey = await crypto.subtle.importKey(
-      "pkcs8",
-      Uint8Array.from(pemKey.split("").map((c) => c.charCodeAt(0))).buffer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
+    console.log("🔑 Clave privada (parcial):", pemKey.substring(0, 50) + "...");
+
+    // 📌 Convertir clave privada de Base64 a binario
+    let keyBuffer;
+    try {
+      keyBuffer = Uint8Array.from(atob(pemKey), (c) => c.charCodeAt(0));
+    } catch (error) {
+      console.error("❌ Error al decodificar la clave privada:", error);
+      throw new Error("No se pudo decodificar la clave privada correctamente.");
+    }
+
+    let cryptoKey;
+    try {
+      cryptoKey = await crypto.subtle.importKey(
+        "pkcs8",
+        keyBuffer.buffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+    } catch (importError) {
+      console.error("❌ Error importando clave privada:", importError);
+      throw new Error("No se pudo importar la clave privada. Verifica el formato.");
+    }
 
     console.log("✅ Clave privada importada correctamente.");
 
     // 📌 Firmar el JWT con la clave privada
-    const signature = await crypto.subtle.sign(
-      "RSASSA-PKCS1-v1_5",
-      cryptoKey,
-      new TextEncoder().encode(jwtUnsigned)
-    );
+    let signature;
+    try {
+      signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, new TextEncoder().encode(jwtUnsigned));
+    } catch (signError) {
+      console.error("❌ Error al firmar el JWT:", signError);
+      throw new Error("No se pudo firmar el JWT.");
+    }
 
-    const jwt = `${jwtUnsigned}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+    const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
+    const jwt = `${jwtUnsigned}.${encodedSignature}`;
 
     // 📌 Obtener el Token de Acceso desde Google OAuth
     console.log("📡 Enviando solicitud a Google OAuth...");
@@ -98,6 +125,10 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     });
 
     const result = await response.json();
+
+    // 🔍 Nuevo Log para Depuración
+    console.log("🔍 Respuesta completa de Google OAuth:", result);
+
     if (!result.access_token) {
       throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
     }
@@ -109,7 +140,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función para obtener archivos de Google Sheets en una carpeta
+// 📌 Función para listar solo archivos Google Sheets en una carpeta
 async function listarHojasDeCalculo(folderId: string, token: string) {
   const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,shortcutDetails)`;
   const response = await fetch(url, {
@@ -117,18 +148,6 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
   });
   const data = await response.json();
   return data.files.filter((file: any) => file.mimeType === "application/vnd.google-apps.spreadsheet");
-}
-
-// 📌 Función para seguir accesos directos
-async function obtenerHojasDesdeCarpeta(folderId: string, token: string) {
-  let hojas = await listarHojasDeCalculo(folderId, token);
-  for (const hoja of hojas) {
-    if (hoja.mimeType === "application/vnd.google-apps.shortcut" && hoja.shortcutDetails?.targetId) {
-      console.log(`🔗 Siguiendo acceso directo a: ${hoja.shortcutDetails.targetId}`);
-      hojas = hojas.concat(await obtenerHojasDesdeCarpeta(hoja.shortcutDetails.targetId, token));
-    }
-  }
-  return hojas;
 }
 
 // 📌 Función para convertir Google Sheet a XLSX
@@ -143,7 +162,7 @@ async function convertirGoogleSheetAXLSX(fileId: string, token: string): Promise
 
 // 📌 Función para subir archivos a Google Cloud Storage
 async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: string) {
-  const bucketName = "cloud-ai-platform-f42b7b51-2a5b-4719-af77-65cf76b7dd86"; // ⬅️ Aquí está tu bucket
+  const bucketName = "cloud-ai-platform-f42b7b51-2a5b-4719-af77-65cf76b7dd86";
   const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucketName}/o?uploadType=media&name=${fileName}`;
 
   const response = await fetch(uploadUrl, {
@@ -162,7 +181,7 @@ async function subirArchivoAGCS(fileName: string, fileData: Uint8Array, token: s
 // 📌 Función principal de backup
 async function realizarBackup(folderId: string, token: string) {
   console.log("📂 Buscando Google Sheets...");
-  const hojas = await obtenerHojasDesdeCarpeta(folderId, token);
+  const hojas = await listarHojasDeCalculo(folderId, token);
 
   console.log(`📄 Total de hojas a respaldar: ${hojas.length}`);
   for (const hoja of hojas) {
