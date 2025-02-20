@@ -143,7 +143,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función para obtener archivos de Google Sheets, incluyendo shortcuts a carpetas
+// 📌 Función para obtener archivos de Google Sheets, incluyendo subcarpetas y shortcuts
 async function listarHojasDeCalculo(folderId: string, token: string) {
   console.log(`📂 Buscando archivos en la carpeta ${folderId}...`);
 
@@ -158,10 +158,20 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
   }
 
   let archivos = (await response.json()).files || [];
+  let hojas = [];
 
-  // 📌 Procesar shortcuts
+  // 📌 Procesar cada archivo
   for (const file of archivos) {
-    if (file.mimeType === "application/vnd.google-apps.shortcut" && file.shortcutDetails?.targetId) {
+    if (file.mimeType === "application/vnd.google-apps.spreadsheet") {
+      // 📄 Es un Google Sheet, lo añadimos a la lista
+      hojas.push(file);
+    } else if (file.mimeType === "application/vnd.google-apps.folder") {
+      // 📂 Es una subcarpeta normal, exploramos su contenido
+      console.log(`📂 Explorando subcarpeta: ${file.name}`);
+      const hojasEnSubcarpeta = await listarHojasDeCalculo(file.id, token);
+      hojas = hojas.concat(hojasEnSubcarpeta);
+    } else if (file.mimeType === "application/vnd.google-apps.shortcut" && file.shortcutDetails?.targetId) {
+      // 🔗 Es un shortcut, verificamos si es una carpeta o un archivo
       const targetId = file.shortcutDetails.targetId;
       console.log(`🔗 Detectado shortcut: ${file.name} -> ${targetId}`);
 
@@ -181,12 +191,14 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
 
         console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetData.name} (${targetData.mimeType})`);
 
-        if (targetData.mimeType === "application/vnd.google-apps.folder") {
+        if (targetData.mimeType === "application/vnd.google-apps.spreadsheet") {
+          // 📄 El shortcut apunta a un Google Sheet, lo añadimos
+          hojas.push(targetData);
+        } else if (targetData.mimeType === "application/vnd.google-apps.folder") {
+          // 📂 El shortcut apunta a una carpeta, exploramos su contenido
           console.log(`📂 Shortcut apunta a una carpeta, listando su contenido...`);
-          const archivosEnCarpeta = await listarHojasDeCalculo(targetId, token);
-          archivos = archivos.concat(archivosEnCarpeta);
-        } else {
-          archivos.push(targetData);
+          const hojasEnShortcut = await listarHojasDeCalculo(targetId, token);
+          hojas = hojas.concat(hojasEnShortcut);
         }
       } catch (error) {
         console.error(`❌ Error al procesar el shortcut ${file.name}:`, error);
@@ -194,10 +206,7 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
     }
   }
 
-  // 📌 Filtrar solo los Google Sheets
-  const hojas = archivos.filter((file: any) => file.mimeType === "application/vnd.google-apps.spreadsheet");
-
-  console.log(`📄 Total de hojas de cálculo detectadas (incluyendo shortcuts): ${hojas.length}`);
+  console.log(`📄 Total de hojas de cálculo detectadas en ${folderId}: ${hojas.length}`);
   return hojas;
 }
 
