@@ -16,33 +16,22 @@ serve(async (req) => {
 
       console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
 
+      // 📌 Imprimir parte de la clave privada para revisar formato
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
+
       // 📌 Obtener el token OAuth
       const token = await obtenerTokenOAuth(credentials);
       console.log("🔑 Token OAuth generado correctamente:", token);
 
-      // 📌 Intentar listar archivos en el bucket
-      const bucketName = "backups-drive-feasy";
-      const archivos = await listarArchivosEnBucket(bucketName, token);
-
-      if (!archivos || archivos.error) {
-        console.error("❌ Error al acceder al bucket:", archivos);
-        throw new Error(`Error en acceso al bucket: ${JSON.stringify(archivos)}`);
-      }
-
-      console.log("📂 Archivos en el bucket:", JSON.stringify(archivos));
-
       return new Response(
-        JSON.stringify({ message: "✅ Backup completado en Deno Deploy", files: archivos }),
+        JSON.stringify({ message: "✅ Backup iniciado correctamente" }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     } catch (error) {
       console.error("❌ Error en el backup:", error);
 
-      // ✅ Manejo seguro del error para evitar TypeError
-      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
-
       return new Response(
-        JSON.stringify({ error: errorMessage }),
+        JSON.stringify({ error: error instanceof Error ? error.message : "Error desconocido" }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
@@ -54,6 +43,8 @@ serve(async (req) => {
 // 📌 Función para generar el token OAuth con la cuenta de servicio
 async function obtenerTokenOAuth(credentials: any): Promise<string> {
   try {
+    console.log("🛠️ Generando JWT...");
+
     const header = {
       alg: "RS256",
       typ: "JWT",
@@ -76,23 +67,39 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     const data = `${encodedHeader}.${encodedPayload}`;
 
     // 📌 Firmar el token con la clave privada
+    console.log("🔏 Firmando el JWT...");
     const encoder = new TextEncoder();
     const keyBuffer = encoder.encode(credentials.private_key.replace(/\\n/g, "\n"));
 
-    const cryptoKey = await crypto.subtle.importKey(
-      "pkcs8",
-      keyBuffer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
+    let cryptoKey;
+    try {
+      cryptoKey = await crypto.subtle.importKey(
+        "pkcs8",
+        keyBuffer,
+        { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+    } catch (importError) {
+      console.error("❌ Error importando clave privada:", importError);
+      throw new Error("No se pudo importar la clave privada. Verifica el formato.");
+    }
 
-    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(data));
+    console.log("✅ Clave privada importada correctamente.");
+
+    let signature;
+    try {
+      signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", cryptoKey, encoder.encode(data));
+    } catch (signError) {
+      console.error("❌ Error al firmar el JWT:", signError);
+      throw new Error("No se pudo firmar el JWT.");
+    }
+
     const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)));
-
     const jwt = `${data}.${encodedSignature}`;
 
     // 📌 Obtener el Token de Acceso desde Google OAuth
+    console.log("📡 Enviando solicitud a Google OAuth...");
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -105,7 +112,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
     const result = await response.json();
 
     // 🔍 Nuevo Log para Depuración
-    console.log("🔍 Respuesta de Google OAuth:", result);
+    console.log("🔍 Respuesta completa de Google OAuth:", result);
 
     if (!result.access_token) {
       throw new Error(`❌ No se pudo obtener el token OAuth. Respuesta: ${JSON.stringify(result)}`);
@@ -115,28 +122,5 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   } catch (error) {
     console.error("❌ Error al generar token OAuth:", error);
     throw new Error("No se pudo generar el token OAuth.");
-  }
-}
-
-// 📌 Función para listar archivos en un bucket de Google Cloud Storage
-async function listarArchivosEnBucket(bucketName: string, token: string) {
-  try {
-    const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${bucketName}/o`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    const result = await response.json();
-    if (result.error) {
-      console.error("❌ Error en respuesta del bucket:", result);
-      throw new Error(`Error en bucket: ${result.error.message}`);
-    }
-
-    return result;
-  } catch (error) {
-    console.error("❌ Error al listar archivos en el bucket:", error);
-    throw new Error("No se pudo acceder a los archivos del bucket.");
   }
 }
