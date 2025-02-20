@@ -20,7 +20,7 @@ serve(async (req) => {
       const token = await obtenerTokenOAuth(credentials);
       console.log("🔑 Token OAuth generado correctamente:", token);
 
-      // 📌 Listar archivos en el bucket
+      // 📌 Intentar listar archivos en el bucket
       const bucketName = "backups-drive-feasy";
       const archivos = await listarArchivosEnBucket(bucketName, token);
 
@@ -37,8 +37,12 @@ serve(async (req) => {
       );
     } catch (error) {
       console.error("❌ Error en el backup:", error);
+
+      // ✅ Manejo seguro del error para evitar TypeError
+      const errorMessage = error instanceof Error ? error.message : "Error desconocido";
+
       return new Response(
-        JSON.stringify({ error: error instanceof Error ? error.message : "Error desconocido" }),
+        JSON.stringify({ error: errorMessage }),
         { status: 500, headers: { "Content-Type": "application/json" } }
       );
     }
