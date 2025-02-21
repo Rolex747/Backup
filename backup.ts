@@ -6,40 +6,38 @@ serve(async (req) => {
   if (req.method === "POST") {
     console.log("🚀 Iniciando backup...");
 
-    // **Responder inmediatamente para evitar timeout**
-    const response = new Response(
-      JSON.stringify({ message: "✅ Backup iniciado en segundo plano." }),
-      { status: 202, headers: { "Content-Type": "application/json" } }
-    );
+    try {
+      // 📌 Leer credenciales desde la variable de entorno en Deno Deploy
+      const credentials = JSON.parse(Deno.env.get("GOOGLE_CLOUD_CREDENTIALS") || "{}");
 
-    // **Ejecutar el backup en segundo plano sin bloquear la respuesta HTTP**
-    (async () => {
-      try {
-        // 📌 Leer credenciales desde la variable de entorno
-        const credentials = JSON.parse(Deno.env.get("GOOGLE_CLOUD_CREDENTIALS") || "{}");
-
-        if (!credentials.client_email || !credentials.private_key) {
-          throw new Error("❌ Credenciales de Google Cloud no encontradas.");
-        }
-
-        console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
-
-        // 📌 Obtener el token OAuth
-        const token = await obtenerTokenOAuth(credentials);
-        console.log("🔑 Token OAuth generado correctamente.");
-
-        // 📌 ID de la carpeta de Google Drive a respaldar
-        const folderId = "1LT7ddkv2GomrY7JfymBwK6YZJXtlKufz";
-
-        // 📌 Realizar el backup en segundo plano
-        await realizarBackup(folderId, token);
-
-      } catch (error) {
-        console.error("❌ Error en el backup:", error);
+      if (!credentials.client_email || !credentials.private_key) {
+        throw new Error("❌ Credenciales de Google Cloud no encontradas.");
       }
-    })();
 
-    return response; // **Retorna inmediatamente sin esperar que termine el backup**
+      console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
+      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
+
+      // 📌 Obtener el token OAuth
+      const token = await obtenerTokenOAuth(credentials);
+      console.log("🔑 Token OAuth generado correctamente.");
+
+      // 📌 ID de la carpeta de Google Drive a respaldar (modificar según sea necesario)
+      const folderId = "1LT7ddkv2GomrY7JfymBwK6YZJXtlKufz";
+
+      // 📌 Realizar el backup
+      await realizarBackup(folderId, token);
+
+      return new Response(
+        JSON.stringify({ message: "✅ Backup completado exitosamente." }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    } catch (error) {
+      console.error("❌ Error en el backup:", error);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }
 
   return new Response("⛔ Método no permitido", { status: 405 });
@@ -145,7 +143,7 @@ async function obtenerTokenOAuth(credentials: any): Promise<string> {
   }
 }
 
-// 📌 Función para obtener archivos de Google Sheets, incluyendo Google Apps Scripts ligados
+// 📌 Función para obtener archivos de Google Sheets, incluyendo subcarpetas y shortcuts
 async function listarHojasDeCalculo(folderId: string, token: string) {
   console.log(`📂 Buscando archivos en la carpeta ${folderId}...`);
 
@@ -162,25 +160,23 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
   let archivos = (await response.json()).files || [];
   let hojas = [];
 
+  // 📌 Procesar cada archivo
   for (const file of archivos) {
     if (file.mimeType === "application/vnd.google-apps.spreadsheet") {
       // 📄 Es un Google Sheet, lo añadimos a la lista
-      console.log(`📄 Detectado Google Sheet: ${file.name}`);
-
-      // 📌 Revisar si hay un Apps Script ligado a esta hoja
-      const scriptId = await obtenerScriptLigado(file.id, token);
-      hojas.push({ ...file, scriptId });
+      hojas.push(file);
     } else if (file.mimeType === "application/vnd.google-apps.folder") {
-      // 📂 Es una subcarpeta, exploramos su contenido
+      // 📂 Es una subcarpeta normal, exploramos su contenido
       console.log(`📂 Explorando subcarpeta: ${file.name}`);
       const hojasEnSubcarpeta = await listarHojasDeCalculo(file.id, token);
       hojas = hojas.concat(hojasEnSubcarpeta);
     } else if (file.mimeType === "application/vnd.google-apps.shortcut" && file.shortcutDetails?.targetId) {
-      // 🔗 Es un shortcut, revisamos si es un Google Sheet o una carpeta
+      // 🔗 Es un shortcut, verificamos si es una carpeta o un archivo
       const targetId = file.shortcutDetails.targetId;
       console.log(`🔗 Detectado shortcut: ${file.name} -> ${targetId}`);
 
       try {
+        // 📌 Obtener información del destino del shortcut
         const targetUrl = `https://www.googleapis.com/drive/v3/files/${targetId}?fields=id,name,mimeType`;
         const targetResponse = await fetch(targetUrl, {
           headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
@@ -189,14 +185,15 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
         const targetData = await targetResponse.json();
 
         if (!targetResponse.ok) {
-          console.warn(`⚠️ No se pudo acceder al destino del shortcut ${file.name}.`, targetData);
+          console.warn(`⚠️ No se pudo acceder al archivo destino del shortcut ${file.name}. Respuesta:`, targetData);
           continue;
         }
 
+        console.log(`✅ Shortcut resuelto: ${file.name} ahora apunta a ${targetData.name} (${targetData.mimeType})`);
+
         if (targetData.mimeType === "application/vnd.google-apps.spreadsheet") {
-          // 📄 El shortcut apunta a un Google Sheet, revisar si tiene Apps Script
-          const scriptId = await obtenerScriptLigado(targetData.id, token);
-          hojas.push({ ...targetData, scriptId });
+          // 📄 El shortcut apunta a un Google Sheet, lo añadimos
+          hojas.push(targetData);
         } else if (targetData.mimeType === "application/vnd.google-apps.folder") {
           // 📂 El shortcut apunta a una carpeta, exploramos su contenido
           console.log(`📂 Shortcut apunta a una carpeta, listando su contenido...`);
@@ -209,76 +206,8 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
     }
   }
 
-  console.log(`📄 Total de hojas detectadas en ${folderId}: ${hojas.length}`);
+  console.log(`📄 Total de hojas de cálculo detectadas en ${folderId}: ${hojas.length}`);
   return hojas;
-}
-
-// 📌 Función para verificar si un Google Sheet tiene un Apps Script ligado
-async function obtenerScriptLigado(sheetId: string, token: string): Promise<string | null> {
-  console.log(`🔍 Buscando Apps Script ligado a la hoja ${sheetId}...`);
-
-  const url = `https://script.googleapis.com/v1/projects`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-  });
-
-  const data = await response.json();
-  console.log(`📡 Respuesta de Google Apps Script API:`, data);
-
-  if (data.projects) {
-    for (const project of data.projects) {
-      if (project.scriptId && project.parentId === sheetId) {
-        console.log(`✅ Apps Script detectado: ${project.scriptId}`);
-        return project.scriptId;
-      }
-    }
-  }
-
-  console.log(`⚠️ No se encontró Apps Script ligado a ${sheetId}`);
-  return null;
-}
-
-// 📌 Función para descargar el código del Apps Script
-async function descargarAppsScript(scriptId: string, token: string): Promise<Uint8Array> {
-  console.log(`📥 Descargando código de Apps Script ${scriptId}...`);
-
-  const url = `https://script.googleapis.com/v1/projects/${scriptId}/content`;
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.google-apps.script+json" },
-  });
-
-  const responseText = await response.text();
-  console.log(`📡 Respuesta de Google Apps Script API:`, responseText);
-
-  if (!response.ok) {
-    console.error(`❌ Error al descargar el Apps Script ${scriptId}.`, responseText);
-    throw new Error(`No se pudo descargar el Apps Script ${scriptId}`);
-  }
-
-  return new TextEncoder().encode(responseText); // Convertir a Uint8Array
-}
-
-// 📌 Función principal de backup (incluye Apps Scripts)
-async function realizarBackup(folderId: string, token: string) {
-  console.log("📂 Buscando Google Sheets...");
-  const hojas = await listarHojasDeCalculo(folderId, token);
-
-  console.log(`📄 Total de hojas a respaldar: ${hojas.length}`);
-  for (const hoja of hojas) {
-    // 📌 Convertir Google Sheet a XLSX
-    const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, token);
-    await subirArchivoAGCS(`${hoja.name}.xlsx`, xlsxData, token);
-
-    // 📌 Verificar si hay un Apps Script vinculado y hacer backup
-    const scriptId = await obtenerScriptLigado(hoja.id, token);
-    if (scriptId) {
-      console.log(`📥 Descargando Apps Script vinculado a ${hoja.name}...`);
-      const scriptData = await descargarAppsScript(scriptId, token);
-      await subirArchivoAGCS(`${hoja.name}.gs.zip`, scriptData, token);
-    }
-  }
-
-  console.log("✅ Backup completado.");
 }
 
 // 📌 Función para convertir Google Sheet a XLSX
