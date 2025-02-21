@@ -215,15 +215,21 @@ async function listarHojasDeCalculo(folderId: string, token: string) {
 async function obtenerScriptLigado(sheetId: string, token: string): Promise<string | null> {
   console.log(`🔍 Buscando Apps Script ligado a la hoja ${sheetId}...`);
 
-  const url = `https://www.googleapis.com/drive/v3/files?q='${sheetId}'+in+parents and mimeType='application/vnd.google-apps.script'&fields=files(id)`;
+  const url = `https://script.googleapis.com/v1/projects`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
   });
 
   const data = await response.json();
-  if (data.files && data.files.length > 0) {
-    console.log(`✅ Apps Script detectado para ${sheetId}: ${data.files[0].id}`);
-    return data.files[0].id;
+  console.log(`📡 Respuesta de Google Apps Script API:`, data);
+
+  if (data.projects) {
+    for (const project of data.projects) {
+      if (project.scriptId && project.parentId === sheetId) {
+        console.log(`✅ Apps Script detectado: ${project.scriptId}`);
+        return project.scriptId;
+      }
+    }
   }
 
   console.log(`⚠️ No se encontró Apps Script ligado a ${sheetId}`);
@@ -239,13 +245,15 @@ async function descargarAppsScript(scriptId: string, token: string): Promise<Uin
     headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.google-apps.script+json" },
   });
 
+  const responseText = await response.text();
+  console.log(`📡 Respuesta de Google Apps Script API:`, responseText);
+
   if (!response.ok) {
-    console.error(`❌ Error al descargar el Apps Script ${scriptId}.`, await response.text());
+    console.error(`❌ Error al descargar el Apps Script ${scriptId}.`, responseText);
     throw new Error(`No se pudo descargar el Apps Script ${scriptId}`);
   }
 
-  const scriptContent = await response.json();
-  return new TextEncoder().encode(JSON.stringify(scriptContent, null, 2)); // Convertir a Uint8Array
+  return new TextEncoder().encode(responseText); // Convertir a Uint8Array
 }
 
 // 📌 Función principal de backup (incluye Apps Scripts)
@@ -259,9 +267,11 @@ async function realizarBackup(folderId: string, token: string) {
     const xlsxData = await convertirGoogleSheetAXLSX(hoja.id, token);
     await subirArchivoAGCS(`${hoja.name}.xlsx`, xlsxData, token);
 
-    // 📌 Si hay un Apps Script ligado, hacer backup también
-    if (hoja.scriptId) {
-      const scriptData = await descargarAppsScript(hoja.scriptId, token);
+    // 📌 Verificar si hay un Apps Script vinculado y hacer backup
+    const scriptId = await obtenerScriptLigado(hoja.id, token);
+    if (scriptId) {
+      console.log(`📥 Descargando Apps Script vinculado a ${hoja.name}...`);
+      const scriptData = await descargarAppsScript(scriptId, token);
       await subirArchivoAGCS(`${hoja.name}.gs.zip`, scriptData, token);
     }
   }
