@@ -1,43 +1,44 @@
-// 📌 Importar el módulo de servidor HTTP de Deno
 import { serve } from "https://deno.land/std@0.181.0/http/server.ts";
 
-// 📌 Iniciar el servidor en Deno Deploy
 serve(async (req) => {
   if (req.method === "POST") {
-    console.log("🚀 Iniciando backup...");
+    console.log("🚀 Recibida solicitud de backup...");
 
-    try {
-      // 📌 Leer credenciales desde la variable de entorno en Deno Deploy
-      const credentials = JSON.parse(Deno.env.get("GOOGLE_CLOUD_CREDENTIALS") || "{}");
+    // 📌 Responder inmediatamente a Google Apps Script
+    const respuestaInmediata = new Response(
+      JSON.stringify({ message: "⏳ Backup iniciado en segundo plano." }),
+      { status: 202, headers: { "Content-Type": "application/json" } }
+    );
 
-      if (!credentials.client_email || !credentials.private_key) {
-        throw new Error("❌ Credenciales de Google Cloud no encontradas.");
+    // ✅ Ejecutar el backup en segundo plano
+    (async () => {
+      try {
+        console.log("🔄 Iniciando proceso de respaldo en segundo plano...");
+
+        // 📌 Leer credenciales desde la variable de entorno
+        const credentials = JSON.parse(Deno.env.get("GOOGLE_CLOUD_CREDENTIALS") || "{}");
+        if (!credentials.client_email || !credentials.private_key) {
+          throw new Error("❌ Credenciales de Google Cloud no encontradas.");
+        }
+
+        console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
+
+        // 📌 Obtener el token OAuth
+        const token = await obtenerTokenOAuth(credentials);
+        console.log("🔑 Token OAuth generado correctamente.");
+
+        // 📌 ID de la carpeta de Google Drive a respaldar
+        const folderId = "1LT7ddkv2GomrY7JfymBwK6YZJXtlKufz";
+
+        // 📌 Ejecutar el respaldo en segundo plano
+        await realizarBackup(folderId, token);
+        console.log("✅ Backup completado.");
+      } catch (error) {
+        console.error("❌ Error en el backup en segundo plano:", error);
       }
+    })();
 
-      console.log("✅ Credenciales cargadas correctamente:", credentials.client_email);
-      console.log("🔑 Primera línea de la clave privada:", credentials.private_key.split("\n")[0]);
-
-      // 📌 Obtener el token OAuth
-      const token = await obtenerTokenOAuth(credentials);
-      console.log("🔑 Token OAuth generado correctamente.");
-
-      // 📌 ID de la carpeta de Google Drive a respaldar (modificar según sea necesario)
-      const folderId = "1LT7ddkv2GomrY7JfymBwK6YZJXtlKufz";
-
-      // 📌 Realizar el backup
-      await realizarBackup(folderId, token);
-
-      return new Response(
-        JSON.stringify({ message: "✅ Backup completado exitosamente." }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    } catch (error) {
-      console.error("❌ Error en el backup:", error);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
+    return respuestaInmediata;
   }
 
   return new Response("⛔ Método no permitido", { status: 405 });
