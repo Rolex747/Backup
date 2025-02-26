@@ -1,3 +1,4 @@
+// 📌 Importar el módulo de servidor HTTP de Deno
 import { serve } from "https://deno.land/std@0.181.0/http/server.ts";
 
 serve(async (req) => {
